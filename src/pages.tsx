@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { listLicenses, createLicense, revokeLicense, reactivateLicense, resetDevice, extendLicense, deleteLicense, License, Stats } from './api/licenses';
+import { listLicenses, createLicense, revokeLicense, reactivateLicense, resetDevice, extendLicense, deleteLicense, forceLogout, License, Stats } from './api/licenses';
 import { listLogs, Log } from './api/logs';
 import { Badge, Confirm, Modal, copyText, fmt, useToast } from './ui';
 
@@ -38,6 +38,7 @@ export function Licenses() {
     {l.status === 'REVOKED' ? <button className="btn" onClick={() => setConfirm({ kind: 'reactivate', l })}>Reactivate</button> : <button className="btn" onClick={() => setConfirm({ kind: 'revoke', l })}>Revoke</button>}
     <button className="btn" disabled={!l.device} onClick={() => setConfirm({ kind: 'reset', l })}>Reset device</button>
     <button className="btn" onClick={() => setExtend(l)}>Extend</button>
+    <button className="btn" onClick={() => setConfirm({ kind: 'logout', l })}>Force logout</button>
     <button className="btn danger" onClick={() => setConfirm({ kind: 'delete', l })}>Delete</button></div>;
   return <><div className="ph"><h1>Licenses</h1><div className="row"><button className="btn" onClick={load} disabled={loading}>{loading ? 'Refreshing…' : 'Refresh'}</button><button className="btn primary" onClick={() => setCreate(true)}>New license</button></div></div>
     <div className="filters"><input placeholder="Search key, customer, product, device" value={search} onChange={e => setSearch(e.target.value)} />
@@ -55,13 +56,13 @@ export function Licenses() {
       <p className="muted">Customer: <b>{created.customer}</b><br />Product: <b>{created.product}</b><br />Expires: <b>{created.expires}</b></p></div>
       <div className="mf"><button className="btn ghost" onClick={() => setCreated(null)}>Done</button><button className="btn primary" onClick={() => copyText(created.key, toast)}>Copy key</button></div></Modal>}
     {sel && !confirm && !extend && <Modal title="License details" wide onClose={() => setSel(null)}><div className="body"><div className="keybox sm">{sel.key}<button className="btn" onClick={() => copyText(sel.key, toast)}>Copy</button></div>
-      <dl>{([['Customer', sel.customer], ['Product', sel.product], ['Status', <Badge s={sel.status} />], ['Device ID', sel.device || '—'], ['Created', fmt(sel.created)], ['Activated', fmt(sel.activated)], ['Expires', fmt(sel.expires)], ['Last check', fmt(sel.lastCheck)], ['Activations', sel.count]] as [string, any][]).map(([k, v]) => <div key={k}><dt>{k}</dt><dd>{v}</dd></div>)}</dl></div><div className="mf">{actions(sel)}</div></Modal>}
+      <dl>{([['Customer', sel.customer], ['Product', sel.product], ['Status', <Badge s={sel.status} />], ['Device ID', sel.device || '—'], ['Created', fmt(sel.created)], ['Activated', fmt(sel.activated)], ['Expires', fmt(sel.expires)], ['Last check', fmt(sel.lastCheck)], ['Activations', sel.count]] as [string, any][]).map(([k, v]) => <div key={k}><dt>{k}</dt><dd>{v}</dd></div>)}</dl><Activity lk={sel.key} /></div><div className="mf">{actions(sel)}</div></Modal>}
     {confirm && <Confirm danger={confirm.kind !== 'reactivate'} typeToConfirm={confirm.kind === 'delete' ? confirm.l.key : undefined}
-      title={{ revoke: 'Revoke license', reactivate: 'Reactivate license', reset: 'Reset device', delete: 'Delete license permanently' }[confirm.kind]!}
-      label={{ revoke: 'Revoke', reactivate: 'Reactivate', reset: 'Reset device', delete: 'Delete forever' }[confirm.kind]!}
-      body={{ revoke: <>Revoking <b>{confirm.l.key}</b> means {confirm.l.customer} immediately loses access.</>, reactivate: <>Restore access for {confirm.l.customer} with <b>{confirm.l.key}</b>.</>, reset: <>This removes the current device binding on <b>{confirm.l.key}</b> so it can be activated on another device.</>, delete: <>This permanently deletes <b>{confirm.l.key}</b> and cannot be undone. {confirm.l.customer} loses access.</> }[confirm.kind]}
+      title={{ revoke: 'Revoke license', reactivate: 'Reactivate license', reset: 'Reset device', delete: 'Delete license permanently', logout: 'Force logout' }[confirm.kind]!}
+      label={{ revoke: 'Revoke', reactivate: 'Reactivate', reset: 'Reset device', delete: 'Delete forever', logout: 'Force logout' }[confirm.kind]!}
+      body={{ revoke: <>Revoking <b>{confirm.l.key}</b> means {confirm.l.customer} immediately loses access.</>, reactivate: <>Restore access for {confirm.l.customer} with <b>{confirm.l.key}</b>.</>, logout: <>Clears the current session token on <b>{confirm.l.key}</b>. Whichever device checks in next starts a fresh session. Nobody is banned and the device binding stays.</>, reset: <>This removes the current device binding on <b>{confirm.l.key}</b> so it can be activated on another device.</>, delete: <>This permanently deletes <b>{confirm.l.key}</b> and cannot be undone. {confirm.l.customer} loses access.</> }[confirm.kind]}
       onClose={() => setConfirm(null)}
-      onConfirm={() => act(() => ({ revoke: revokeLicense, reactivate: reactivateLicense, reset: resetDevice, delete: deleteLicense } as any)[confirm.kind](confirm.l.key), { revoke: 'License revoked', reactivate: 'License reactivated', reset: 'Device reset', delete: 'License deleted' }[confirm.kind]!)} />}
+      onConfirm={() => act(() => ({ revoke: revokeLicense, reactivate: reactivateLicense, reset: resetDevice, delete: deleteLicense, logout: forceLogout } as any)[confirm.kind](confirm.l.key), { revoke: 'License revoked', reactivate: 'License reactivated', reset: 'Device reset', delete: 'License deleted', logout: 'Session cleared' }[confirm.kind]!)} />}
     {extend && <ExtendModal l={extend} onClose={() => setExtend(null)} onConfirm={n => act(() => extendLicense(extend.key, n), `Extended by ${n} days`)} />}</>;
 }
 
@@ -95,7 +96,7 @@ export function Logs() {
   useEffect(() => { const t = setTimeout(load, search ? 300 : 0); return () => clearTimeout(t); }, [load]);
   const actionsSeen = useRef(new Set<string>()); logs?.forEach(l => l.action && actionsSeen.current.add(l.action));
   const shown = (logs || []).filter(l => (!action || l.action === action) && (!search || Object.values(l).join(' ').toLowerCase().includes(search.toLowerCase())));
-  const ok = (r: string) => /success|ok|valid|true|1/i.test(r) && !/fail|error|invalid|denied/i.test(r);
+  const ok = (r: string) => /success|ok|valid|true|1/i.test(r) && !/fail|error|invalid|denied|revoked|blocked/i.test(r);
   return <><div className="ph"><h1>Activity logs</h1><button className="btn" onClick={load} disabled={loading}>{loading ? 'Refreshing…' : 'Refresh'}</button></div>
     <div className="filters"><input placeholder="Search logs" value={search} onChange={e => setSearch(e.target.value)} /><select value={action} onChange={e => setAction(e.target.value)}><option value="">All actions</option>{[...actionsSeen.current].map(a => <option key={a}>{a}</option>)}</select></div>
     {error ? <Err m={error} retry={load} /> : loading && !logs ? <div className="card">{[1, 2, 3, 4].map(i => <div className="skel row-s" key={i} />)}</div> : !shown.length ? <div className="state"><b>No log entries</b><span>Activity will appear here as customers and admins use licenses.</span></div> :
@@ -103,4 +104,16 @@ export function Logs() {
         {shown.map(l => <tr key={l.id}><td data-l="Time">{fmt(l.time)}</td><td data-l="Action"><span className="tag">{l.action}</span></td><td data-l="License"><code>{l.key || '—'}</code></td><td data-l="Customer">{l.customer || '—'}</td><td data-l="Product">{l.product || '—'}</td>
           <td data-l="Device"><code className="trunc">{l.device || '—'}</code></td><td data-l="Result">{l.result ? <span className={'res ' + (ok(l.result) ? 'good' : 'bad')}>{ok(l.result) ? '✓' : '✕'} {l.result}</span> : '—'}</td><td data-l="IP hash"><code className="trunc">{l.ip || '—'}</code></td></tr>)}</tbody></table></div>
         {logs!.length >= limit && <div className="center"><button className="btn" onClick={() => setLimit(limit + 100)}>Load more</button></div>}</>}</>;
+}
+
+function Activity({ lk }: { lk: string }) {
+  const [rows, setRows] = useState<Log[] | null>(null); const [err, setErr] = useState('');
+  useEffect(() => { listLogs({ search: lk, limit: 50 }).then(r => setRows(r.filter(x => x.key === lk).sort((a, b) => (b.time || 0) - (a.time || 0)))).catch(e => setErr(errMsg(e))); }, [lk]);
+  const day = (rows || []).filter(r => r.time && r.time > Date.now() - 864e5);
+  const nick = new Set(day.map(r => r.nickname).filter(Boolean)).size, ips = new Set(day.map(r => r.ip).filter(Boolean)).size;
+  return <div className="act"><h3>Recent activity</h3>
+    {nick > 1 || ips > 1 ? <div className="risk" role="alert">⚠ SHARING RISK — {nick} nicknames · {ips} IPs in the last 24h. Review only; nothing is blocked automatically.</div> : rows && <p className="muted">No sharing signals in the last 24h.</p>}
+    {err ? <p className="error">{err}</p> : !rows ? <div className="skel row-s" /> : !rows.length ? <p className="muted">No activity recorded for this license yet.</p> :
+      <div className="tw"><table><thead><tr>{['Time', 'Endpoint', 'Nickname', 'Server', 'IP', 'Result'].map(h => <th key={h}>{h}</th>)}</tr></thead><tbody>
+        {rows.map(r => <tr key={r.id} onClick={undefined}><td data-l="Time">{fmt(r.time)}</td><td data-l="Endpoint"><span className="tag">{r.endpoint || r.action}</span></td><td data-l="Nickname">{r.nickname || '—'}</td><td data-l="Server">{r.server || '—'}</td><td data-l="IP"><code className="trunc">{r.ip || '—'}</code></td><td data-l="Result">{r.result || '—'}</td></tr>)}</tbody></table></div>}</div>;
 }
