@@ -34,4 +34,5 @@ export const revokeLicense = (license_key: string) => post('revoke', { license_k
 export const reactivateLicense = (license_key: string) => post('reactivate', { license_key });
 export const resetDevice = (license_key: string) => post('reset-device', { license_key });
 export const extendLicense = (license_key: string, days: number) => post('extend', { license_key, days });
+export const forceLogout = (license_key: string) => post('force-logout', { license_key });
 export const deleteLicense = (license_key: string) => post('delete', { license_key });
